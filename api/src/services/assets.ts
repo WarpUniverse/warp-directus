@@ -1,14 +1,14 @@
-import type { Range, Stat } from '@directus/storage';
-import type { Accountability } from '@directus/types';
-import type { Knex } from 'knex';
-import { clamp } from 'lodash-es';
-import { contentType } from 'mime-types';
-import type { Readable } from 'node:stream';
+import type {Range, Stat} from '@directus/storage';
+import type {Accountability} from '@directus/types';
+import type {Knex} from 'knex';
+import {clamp} from 'lodash-es';
+import {contentType} from 'mime-types';
+import type {Readable} from 'node:stream';
 import hash from 'object-hash';
 import path from 'path';
 import sharp from 'sharp';
 import validateUUID from 'uuid-validate';
-import { SUPPORTED_IMAGE_TRANSFORM_FORMATS } from '../constants.js';
+import {SUPPORTED_IMAGE_TRANSFORM_FORMATS, SYSTEM_ASSET_ALLOW_LIST} from '../constants.js';
 import getDatabase from '../database/index.js';
 import env from '../env.js';
 import {
@@ -18,11 +18,11 @@ import {
 	ServiceUnavailableError,
 } from '../errors/index.js';
 import logger from '../logger.js';
-import { getStorage } from '../storage/index.js';
-import type { AbstractServiceOptions, File, Transformation, TransformationSet } from '../types/index.js';
-import { getMilliseconds } from '../utils/get-milliseconds.js';
+import {getStorage} from '../storage/index.js';
+import type {AbstractServiceOptions, File, Transformation, TransformationSet} from '../types/index.js';
+import {getMilliseconds} from '../utils/get-milliseconds.js';
 import * as TransformationUtils from '../utils/transformations.js';
-import { AuthorizationService } from './authorization.js';
+import {AuthorizationService} from './authorization.js';
 
 export class AssetsService {
 	knex: Knex;
@@ -189,6 +189,66 @@ export class AssetsService {
 			const readStream = await storage.location(file.storage).read(file.filename_disk, range);
 			const stat = await storage.location(file.storage).stat(file.filename_disk);
 			return { stream: readStream, file, stat };
+		}
+	}
+
+	async uploadThumbnails(fileKey: string) {
+		const storage = await getStorage();
+
+		const file = (await this.knex.select('*').from('directus_files').where({ id: fileKey }).first()) as File;
+
+		if (!file) return
+
+		const exists = await storage.location(file.storage).exists(file.filename_disk);
+
+		if (!exists) return
+
+		const transformationParams = SYSTEM_ASSET_ALLOW_LIST.find(({key}) => key === 'system-small-cover')
+		const transforms = transformationParams?.transforms
+
+		if (!transforms) return
+
+		const type = file.type;
+		if (type && SUPPORTED_IMAGE_TRANSFORM_FORMATS.includes(type)) {
+			const maybeNewFormat = TransformationUtils.maybeExtractFormat(transforms);
+
+			const assetFilename =
+				path.basename(file.filename_disk, path.extname(file.filename_disk)) +
+				`__${transformationParams?.key}` +
+				(maybeNewFormat ? `.${maybeNewFormat}` : path.extname(file.filename_disk));
+
+			const exists = await storage.location(file.storage).exists(assetFilename);
+
+			if (maybeNewFormat) {
+				file.type = contentType(assetFilename) || null;
+			}
+
+			if (exists) {
+				return
+			}
+
+			const readStream = await storage.location(file.storage).read(file.filename_disk);
+
+			const transformer = sharp({
+				limitInputPixels: Math.pow(env['ASSETS_TRANSFORM_IMAGE_MAX_DIMENSION'], 2),
+				sequentialRead: true,
+				failOn: env['ASSETS_INVALID_IMAGE_SENSITIVITY_LEVEL'],
+			});
+
+			transformer.timeout({
+				seconds: clamp(Math.round(getMilliseconds(env['ASSETS_TRANSFORM_TIMEOUT'], 0) / 1000), 1, 3600),
+			});
+
+			if (transforms.find((transform) => transform[0] === 'rotate') === undefined) transformer.rotate();
+
+			transforms.forEach(([method, ...args]) => (transformer[method] as any).apply(transformer, args));
+
+			readStream.on('error', (e: Error) => {
+				logger.error(e, `Couldn't transform file ${file.id}`);
+				readStream.unpipe(transformer);
+			});
+
+			await storage.location(file.storage).write(assetFilename, readStream.pipe(transformer), type);
 		}
 	}
 }

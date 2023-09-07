@@ -1,14 +1,14 @@
-import { handlePressure } from '@directus/pressure';
+import {handlePressure} from '@directus/pressure';
 import cookieParser from 'cookie-parser';
-import type { Request, RequestHandler, Response } from 'express';
+import type {Request, RequestHandler, Response} from 'express';
 import express from 'express';
-import type { ServerResponse } from 'http';
-import { merge } from 'lodash-es';
-import { readFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import type {ServerResponse} from 'http';
+import {merge} from 'lodash-es';
+import {readFile} from 'node:fs/promises';
+import {createRequire} from 'node:module';
 import path from 'path';
 import qs from 'qs';
-import { registerAuthProviders } from './auth.js';
+import {registerAuthProviders} from './auth.js';
 import activityRouter from './controllers/activity.js';
 import assetsRouter from './controllers/assets.js';
 import authRouter from './controllers/auth.js';
@@ -46,13 +46,13 @@ import {
 } from './database/index.js';
 import emitter from './emitter.js';
 import env from './env.js';
-import { InvalidPayloadError, ServiceUnavailableError } from './errors/index.js';
-import { getExtensionManager } from './extensions.js';
-import { getFlowManager } from './flows.js';
-import logger, { expressLogger } from './logger.js';
+import {InvalidPayloadError, ServiceUnavailableError} from './errors/index.js';
+import {getExtensionManager} from './extensions.js';
+import {getFlowManager} from './flows.js';
+import logger, {expressLogger} from './logger.js';
 import authenticate from './middleware/authenticate.js';
 import cache from './middleware/cache.js';
-import { checkIP } from './middleware/check-ip.js';
+import {checkIP} from './middleware/check-ip.js';
 import cors from './middleware/cors.js';
 import errorHandler from './middleware/error-handler.js';
 import extractToken from './middleware/extract-token.js';
@@ -61,12 +61,13 @@ import rateLimiterGlobal from './middleware/rate-limiter-global.js';
 import rateLimiter from './middleware/rate-limiter-ip.js';
 import sanitizeQuery from './middleware/sanitize-query.js';
 import schema from './middleware/schema.js';
-import { getConfigFromEnv } from './utils/get-config-from-env.js';
-import { collectTelemetry } from './utils/telemetry.js';
-import { Url } from './utils/url.js';
-import { validateEnv } from './utils/validate-env.js';
-import { validateStorage } from './utils/validate-storage.js';
-import { init as initWebhooks } from './webhooks.js';
+import {getConfigFromEnv} from './utils/get-config-from-env.js';
+import {collectTelemetry} from './utils/telemetry.js';
+import {Url} from './utils/url.js';
+import {validateEnv} from './utils/validate-env.js';
+import {validateStorage} from './utils/validate-storage.js';
+import {init as initWebhooks} from './webhooks.js';
+import {registerAutoResizer} from "./services/assets-auto-resizer.js";
 
 const require = createRequire(import.meta.url);
 
@@ -305,6 +306,8 @@ export default async function createApp(): Promise<express.Application> {
 
 	// Register all webhooks
 	await initWebhooks();
+
+	await registerAutoResizer()
 
 	collectTelemetry();
 
