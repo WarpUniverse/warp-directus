@@ -8,7 +8,7 @@ import hash from 'object-hash';
 import path from 'path';
 import sharp from 'sharp';
 import validateUUID from 'uuid-validate';
-import {SUPPORTED_IMAGE_TRANSFORM_FORMATS, SYSTEM_ASSET_ALLOW_LIST} from '../constants.js';
+import {SUPPORTED_IMAGE_TRANSFORM_FORMATS} from '../constants.js';
 import getDatabase from '../database/index.js';
 import env from '../env.js';
 import {
@@ -19,7 +19,13 @@ import {
 } from '../errors/index.js';
 import logger from '../logger.js';
 import {getStorage} from '../storage/index.js';
-import type {AbstractServiceOptions, File, Transformation, TransformationSet} from '../types/index.js';
+import type {
+	AbstractServiceOptions,
+	File,
+	Transformation,
+	TransformationParams,
+	TransformationSet
+} from '../types/index.js';
 import {getMilliseconds} from '../utils/get-milliseconds.js';
 import * as TransformationUtils from '../utils/transformations.js';
 import {AuthorizationService} from './authorization.js';
@@ -203,55 +209,114 @@ export class AssetsService {
 
 		if (!exists) return
 
-		const transformationParams = SYSTEM_ASSET_ALLOW_LIST.find(({key}) => key === 'system-small-cover')
-		const transforms = transformationParams?.transforms
+		for (const transformationParams of DEFAULT_TRANSFORMATIONS) {
+			const transforms = transformationParams?.transforms
 
-		if (!transforms) return
+			if (!transforms) return
 
-		const type = file.type;
-		if (type && SUPPORTED_IMAGE_TRANSFORM_FORMATS.includes(type)) {
-			const maybeNewFormat = TransformationUtils.maybeExtractFormat(transforms);
+			const type = file.type;
+			if (type && SUPPORTED_IMAGE_TRANSFORM_FORMATS.includes(type)) {
+				const maybeNewFormat = TransformationUtils.maybeExtractFormat(transforms);
 
-			const assetFilename =
-				path.basename(file.filename_disk, path.extname(file.filename_disk)) +
-				`__${transformationParams?.key}` +
-				(maybeNewFormat ? `.${maybeNewFormat}` : path.extname(file.filename_disk));
+				const assetFilename =
+					path.basename(file.filename_disk, path.extname(file.filename_disk)) +
+					`__${transformationParams?.key}` +
+					(maybeNewFormat ? `.${maybeNewFormat}` : path.extname(file.filename_disk));
 
-			const exists = await storage.location(file.storage).exists(assetFilename);
+				const exists = await storage.location(file.storage).exists(assetFilename);
 
-			if (maybeNewFormat) {
-				file.type = contentType(assetFilename) || null;
+				if (maybeNewFormat) {
+					file.type = contentType(assetFilename) || null;
+				}
+
+				if (exists) {
+					return
+				}
+
+				const readStream = await storage.location(file.storage).read(file.filename_disk);
+
+				const transformer = sharp({
+					limitInputPixels: Math.pow(env['ASSETS_TRANSFORM_IMAGE_MAX_DIMENSION'], 2),
+					sequentialRead: true,
+					failOn: env['ASSETS_INVALID_IMAGE_SENSITIVITY_LEVEL'],
+				});
+
+				transformer.timeout({
+					seconds: clamp(Math.round(getMilliseconds(env['ASSETS_TRANSFORM_TIMEOUT'], 0) / 1000), 1, 3600),
+				});
+
+				if (transforms.find((transform) => transform[0] === 'rotate') === undefined) transformer.rotate();
+
+				transforms.forEach(([method, ...args]) => (transformer[method] as any).apply(transformer, args));
+
+				readStream.on('error', (e: Error) => {
+					logger.error(e, `Couldn't transform file ${file.id}`);
+					readStream.unpipe(transformer);
+				});
+
+				await storage.location(file.storage).write(assetFilename, readStream.pipe(transformer), type);
 			}
-
-			if (exists) {
-				return
-			}
-
-			const readStream = await storage.location(file.storage).read(file.filename_disk);
-
-			const transformer = sharp({
-				limitInputPixels: Math.pow(env['ASSETS_TRANSFORM_IMAGE_MAX_DIMENSION'], 2),
-				sequentialRead: true,
-				failOn: env['ASSETS_INVALID_IMAGE_SENSITIVITY_LEVEL'],
-			});
-
-			transformer.timeout({
-				seconds: clamp(Math.round(getMilliseconds(env['ASSETS_TRANSFORM_TIMEOUT'], 0) / 1000), 1, 3600),
-			});
-
-			if (transforms.find((transform) => transform[0] === 'rotate') === undefined) transformer.rotate();
-
-			transforms.forEach(([method, ...args]) => (transformer[method] as any).apply(transformer, args));
-
-			readStream.on('error', (e: Error) => {
-				logger.error(e, `Couldn't transform file ${file.id}`);
-				readStream.unpipe(transformer);
-			});
-
-			await storage.location(file.storage).write(assetFilename, readStream.pipe(transformer), type);
 		}
 	}
 }
+
+export const DEFAULT_TRANSFORMATIONS: TransformationParams[] = [
+	{
+		key: 'shop_category',
+		format: 'auto',
+		transforms: [['resize', { width: 132, height: 172, fit: 'cover' }]]
+	},
+	{
+		key: 'services',
+		format: 'auto',
+		transforms: [['resize', { width: 343, height: 172, fit: 'cover' }]]
+	},
+	{
+		key: 'search',
+		format: 'auto',
+		transforms: [['resize', { width: 36, height: 36, fit: 'cover' }]]
+	},
+	{
+		key: 'category_items_first',
+		format: 'auto',
+		transforms: [['resize', { width: 188, height: 188, fit: 'cover' }]]
+	},
+	{
+		key: 'category_items_else',
+		format: 'auto',
+		transforms: [['resize', { width: 240, height: 188, fit: 'cover' }]]
+	},
+	{
+		key: 'service_full_size',
+		format: 'auto',
+		transforms: [['resize', { width: 375, height: 422, fit: 'cover' }]]
+	},
+	{
+		key: 'service_additional',
+		format: 'auto',
+		transforms: [['resize', { width: 64, height: 64, fit: 'cover' }]]
+	},
+	{
+		key: 'goods_catalog',
+		format: 'auto',
+		transforms: [['resize', { width: 152, height: 146, fit: 'cover' }]]
+	},
+	{
+		key: 'cart_good',
+		format: 'auto',
+		transforms: [['resize', { width: 68, height: 68, fit: 'cover' }]]
+	},
+	{
+		key: 'good_card',
+		format: 'auto',
+		transforms: [['resize', { width: 375, height: 360, fit: 'cover' }]]
+	},
+	{
+		key: 'map_icon',
+		format: 'auto',
+		transforms: [['resize', { width: 56, height: 56, fit: 'cover' }]]
+	},
+]
 
 const getAssetSuffix = (transforms: Transformation[]) => {
 	if (Object.keys(transforms).length === 0) return '';
