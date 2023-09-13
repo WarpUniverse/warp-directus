@@ -316,6 +316,11 @@ export const DEFAULT_TRANSFORMATIONS: TransformationParams[] = [
 		format: 'auto',
 		transforms: [['resize', { width: 56, height: 56, fit: 'cover' }]]
 	},
+	{
+		key: 'restaurant_category_icon',
+		format: 'auto',
+		transforms: [['resize', { width: 16, height: 16, fit: 'cover' }]]
+	},
 ]
 
 const getAssetSuffix = (transforms: Transformation[]) => {
